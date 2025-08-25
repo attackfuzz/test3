@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ギターコード → MIDI（.mid）ジェネレーター：分数コード & BPM対応</title>
+  <style>
+    :root { --bg:#0b0c10; --ink:#e5e7eb; --muted:#9ca3af; --accent:#60a5fa; --card:#111827; --ok:#34d399; --warn:#fbbf24; --err:#f87171; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; color: var(--ink); background: radial-gradient(1200px 800px at 20% -10%, rgba(96,165,250,.15), transparent), var(--bg); }
+    header { padding: 16px 20px; border-bottom: 1px solid #111; backdrop-filter: blur(8px); position: sticky; top:0; background: linear-gradient(180deg, rgba(17,24,39,.8), rgba(17,24,39,.4)); }
+    h1 { margin: 0; font-size: 20px; letter-spacing: .4px; }
+    main { padding: 20px; display: grid; gap: 16px; max-width: 1100px; margin: 0 auto; }
+    .grid { display: grid; gap: 12px; grid-template-columns: 1fr; }
+    @media(min-width: 960px){ .grid { grid-template-columns: 1.2fr .8fr; } }
+    .card { background: var(--card); border-radius: 16px; padding: 16px; border: 1px solid #1f2937; box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    textarea, input { width: 100%; background: #0f1624; color: var(--ink); border: 1px solid #1f2937; padding: 10px 12px; border-radius: 12px; outline: none; font-family: inherit; font-size: 13px; }
+    textarea { min-height: 180px; resize: vertical; line-height: 1.5; }
+    .row { display: grid; gap: 10px; grid-template-columns: repeat(2, 1fr); }
+    .row3 { display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); }
+    button { background: #0d1b2a; color: var(--ink); border: 1px solid #1f2937; padding: 10px 14px; border-radius: 12px; cursor: pointer; font-weight: 600; }
+    button.primary { background: #111827; border-color: var(--accent); box-shadow: 0 0 0 1px rgba(96,165,250,.25) inset; }
+    button:hover { filter: brightness(1.05); }
+    .muted { color: var(--muted); }
+    .mono { font-family: inherit; white-space: pre; background: #0b1220; border: 1px dashed #223; padding: 12px; border-radius: 12px; overflow: auto; max-height: 520px; }
+    .good { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .bad { color: var(--err); }
+    .small { font-size: 12px; }
+    .kbd { background:#0e1a2a; border:1px solid #1f2937; padding:2px 6px; border-radius:6px; font-size:12px; display:inline-block; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ギターコード → MIDI（.mid）ジェネレーター</h1>
+    <div class="small muted">空白/タブ/改行でコードを入力。例: <span class="kbd">C</span> <span class="kbd">Cm</span> <span class="kbd">C7</span> <span class="kbd">Cm7</span> <span class="kbd">CM7</span> <span class="kbd">Csus4</span> <span class="kbd">C7sus4</span> <span class="kbd">Cadd9</span> <span class="kbd">Cm7♭5</span> <span class="kbd">Cdim7</span> <span class="kbd">C6</span> <span class="kbd">Caug</span> <span class="kbd">CmM7</span> <span class="kbd">Cm6</span>／ 分数コード: <span class="kbd">C/E</span> <span class="kbd">Dm/F</span> ／ 長さ: <span class="kbd">2分C</span>, <span class="kbd">4部D</span></div>
+  </header>
+
+  <main>
+    <div class="grid">
+      <section class="card">
+        <div class="row3" style="margin-bottom:10px;">
+          <div>
+            <label for="bpm">テンポ（BPM）</label>
+            <input type="number" id="bpm" value="120" min="20" max="300" />
+          </div>
+          <div>
+            <label for="ppq">分解能（TPQ / ticks per quarter）</label>
+            <input type="number" id="ppq" value="480" min="48" max="9600" />
+          </div>
+          <div>
+            <label for="octave">基準オクターブ（0=低 ~ 8=高）</label>
+            <input type="number" id="octave" value="4" min="0" max="8" />
+          </div>
+        </div>
+        <label for="input">コード列（空白/タブ/改行で区切り）</label>
+        <textarea id="input" placeholder="C	Cm	C7	Cm7	CM7	Csus4	C7sus4	Cadd9	Cm7♭5	Cdim7	C6	Caug	CmM7	Cm6
+2分C	4部D	8部G7
+C/E	Dm/F	G/B"></textarea>
+        <div class="row" style="margin-top:12px;">
+          <button class="primary" id="genBtn">MIDIファイル生成</button>
+          <button id="copyAscii">プレビュー表をコピー</button>
+        </div>
+        <div id="status" class="small muted" style="margin-top:8px;"></div>
+      </section>
+
+      <section class="card">
+        <label>ASCIIプレビュー（コピペ可）</label>
+        <pre id="ascii" class="mono">(ここに解析結果が表示されます)</pre>
+      </section>
+    </div>
+
+    <section class="card">
+      <details>
+        <summary>対応表記（クリックで展開）</summary>
+        <div class="small">
+          <p>・ルート/Bass: <code>A?G</code> に <code>#/♯/＃</code> または <code>b/♭/ｂ</code>（例: <code>F#</code>, <code>B♭</code>）。全角半角は自動正規化。分数コード可（<code>C/E</code>）。</p>
+          <p>・コード品質（例）: <code>m</code>, <code>7</code>, <code>m7</code>, <code>M7/maj7/Δ7</code>, <code>mM7/mMaj7</code>, <code>6</code>, <code>m6</code>, <code>sus4</code>, <code>7sus4</code>, <code>add9</code>, <code>dim</code>, <code>dim7/o7/°7</code>, <code>m7b5/m7♭5/o7</code>, <code>aug/+</code> など。</p>
+          <p>・長さ指定: 先頭に <code>数値+分/部</code>。<code>2分C</code>=二分音符（全音符1/2）、<code>4部C</code>=四分音符（全音符1/4）、未指定は全音符。</p>
+          <p>・出力: 1トラックSMF Format 0、Ch 1（Acoustic Grand Piano）。ベース指定がある場合はその音を<strong>最も低い音</strong>として配置、上声の重複度数は除去。</p>
+        </div>
+      </details>
+    </section>
+  </main>
+
+  <script>
+    // ===== ユーティリティ: 全角→半角/記号正規化 =====
+    function toHalfWidth(str){
+      return str.replace(/[！-～]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+                .replace(/[???]/g, '-')
+                .replace(/[♯＃]/g, '#')
+                .replace(/[♭ｂ]/g, 'b')
+                .replace(/[　\s]+/g, ' ')
+                .trim();
+    }
+
+    // ===== 音名 → MIDIノート番号（C=0） =====
+    const PITCH_CLASS = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
+    function noteNumber(root, octave){
+      const m = root.match(/^([A-G])([#b]?)/i);
+      if(!m) throw new Error('不正な音名: ' + root);
+      const letter = m[1].toUpperCase();
+      const acc = m[2] || '';
+      let pc = PITCH_CLASS[letter];
+      if(acc === '#') pc += 1; else if(acc === 'b') pc -= 1;
+      pc = (pc + 12) % 12;
+      const n = pc + (octave + 1) * 12; // MIDI: C-1=0 → C4=60
+      return n;
+    }
+
+    // ===== コード構成音（半音インターバル） =====
+    function chordFormula(sym){
+      // 既定はメジャートライアド
+      if(!sym || sym === '') return [0,4,7];
+
+      // sus
+      if(/7sus4$/i.test(sym)) return [0,5,7,10];
+      if(/sus4$/i.test(sym))  return [0,5,7];
+
+      // dim 系
+      if(/^(dim7|o7|°7)$/i.test(sym)) return [0,3,6,9];
+      if(/^(dim|o|°)$/i.test(sym))    return [0,3,6];
+
+      // minor 系
+      if(/^mM7$/i.test(sym) || /^mMaj7$/i.test(sym)) return [0,3,7,11];
+      if(/^m7b5$/i.test(sym) || /^m7♭5$/i.test(sym) || /^o7$/i.test(sym)) return [0,3,6,10];
+      if(/^m7$/i.test(sym))  return [0,3,7,10];
+      if(/^m6$/i.test(sym))  return [0,3,7,9];
+      if(/^m$/i.test(sym))   return [0,3,7];
+
+      // major/other
+      if(/^(M7|maj7|Δ7)$/i.test(sym)) return [0,4,7,11];
+      if(/^6$/i.test(sym))   return [0,4,7,9];
+      if(/^7$/i.test(sym))   return [0,4,7,10];
+      if(/^(aug|\+)$/i.test(sym)) return [0,4,8];
+
+      // add9
+      if(/add9$/i.test(sym)) return [0,4,7,14];
+
+      // 既定
+      return [0,4,7];
+    }
+
+    // ===== トークン解析（長さ・コード・分数ベース） =====
+    function parseToken(raw){
+      const t = toHalfWidth(raw);
+      if(!t) return null;
+
+      // 先頭の長さ（例: 2分C/E, 4部Dm/F）
+      const m = t.match(/^(\d+)\s*[分部]?\s*([A-G](?:#|b)?(?:\s*\/\s*[A-G](?:#|b)?)?)(.*)$/i);
+      let quarters, chordStr;
+      if(m){
+        const n = parseInt(m[1],10);
+        quarters = 4 / n; // 2→2.0, 4→1.0, 8→0.5
+        chordStr = (m[2] + (m[3]||'')).replace(/\s+/g,'');
+      } else {
+        quarters = 4; // 全音符
+        chordStr = t.replace(/\s+/g,'');
+      }
+
+      // 分数コード分割
+      const parts = chordStr.split('/');
+      const main = parts[0];
+      const bass = parts[1] || null;
+
+      const m2 = main.match(/^([A-G](?:#|b)?)(.*)$/i);
+      if(!m2) throw new Error('コードを解釈できません: ' + raw);
+      const root = m2[1];
+      let qual = (m2[2]||'').trim();
+
+      // 表記ゆれ正規化
+      qual = qual.replace(/^maj7$/i,'M7')
+                 .replace(/^Δ7$/,'M7')
+                 .replace(/^o7$/,'m7b5')
+                 .replace(/^o7$/,'dim7')
+                 .replace(/^°7$/,'dim7')
+                 .replace(/^\+$/,'aug')
+                 .replace(/♭/g,'b');
+
+      return { raw, root, qual, bass, quarters };
+    }
+
+    // ===== 可読用: ピッチクラス一致判定 =====
+    function pc(n){ return ((n%12)+12)%12; }
+
+    // ===== ASCII表作成 =====
+    function rowsToAscii(rows, octave, ppq){
+      const header = `+----+----------------------+--------------+-----------+---------------------------+-----------+--------+\n| #  | token                | chord        | bass      | notes (MIDI)              | quarters  | ticks  |\n+----+----------------------+--------------+-----------+---------------------------+-----------+--------+`;
+      const lines = [header];
+      rows.forEach((r,idx)=>{
+        const ints = chordFormula(r.qual);
+        const base = noteNumber(r.root, octave);
+        const chordUp = ints.map(iv => base + iv);
+        const bassOct = Math.max(0, octave-1);
+        const bassNote = noteNumber(r.bass ? r.bass : r.root, bassOct);
+        // 上声はベースより上に
+        const upper = chordUp.filter(n => pc(n)!==pc(bassNote)).map(n=>{
+          while(n <= bassNote) n += 12;
+          return n;
+        });
+        const notes = [bassNote, ...upper];
+        const tick = Math.max(1, Math.round(r.quarters * ppq));
+        function pad(s,n){ s = String(s); return (s + ' '.repeat(n)).slice(0,n); }
+        lines.push(`| ${pad(idx+1,2)} | ${pad(r.raw,20)} | ${pad(r.root+(r.qual||''),12)} | ${pad(r.bass||'-',9)} | ${pad(notes.join(','), 25)} | ${pad(r.quarters,9)} | ${pad(tick,6)} |`);
+      });
+      lines.push('+----+----------------------+--------------+-----------+---------------------------+-----------+--------+');
+      return lines.join('\n');
+    }
+
+    // ===== MIDI構築ユーティリティ =====
+    function u16(n){ return [(n>>8)&255, n&255]; }
+    function u32(n){ return [(n>>>24)&255, (n>>>16)&255, (n>>>8)&255, n&255]; }
+    function vlq(n){ let b=[n&0x7F]; while((n>>=7)) b.unshift((n&0x7F)|0x80); return b; }
+    function meta(delta, type, data){ return [...vlq(delta), 0xFF, type, ...vlq(data.length), ...data]; }
+    function noteOn(delta, ch, n, v){ return [...vlq(delta), 0x90|(ch&0x0F), n&127, v&127]; }
+    function noteOff(delta, ch, n, v){ return [...vlq(delta), 0x80|(ch&0x0F), n&127, v&127]; }
+    function programChange(delta, ch, prog){ return [...vlq(delta), 0xC0|(ch&0x0F), prog&127]; }
+
+    function tempoMeta(bpm){ const mpqn = Math.round(60000000 / bpm); return meta(0, 0x51, [(mpqn>>16)&255,(mpqn>>8)&255,mpqn&255]); }
+    function timeSigMeta(nn,dd){ return meta(0, 0x58, [nn, Math.log2(dd)|0, 24, 8]); }
+
+    function buildTrack(events){ const body=[]; events.forEach(e=>body.push(...e)); return [77,84,114,107, ...u32(body.length), ...body]; }
+    function makeMidi(track, ppq){ const header=[77,84,104,100, ...u32(6), ...u16(0), ...u16(1), ...u16(ppq)]; return new Uint8Array([...header, ...track]); }
+
+    // ===== 解析 & MIDI構築 =====
+    function parseAll(input){
+      const tokens = input.split(/\s+/).map(s=>s.trim()).filter(Boolean);
+      const rows = [];
+      for(const t of tokens){ rows.push(parseToken(t)); }
+      return rows;
+    }
+
+    function buildMidiFromRows(rows){
+      const bpm = Math.max(20, Math.min(300, parseInt(document.getElementById('bpm').value,10) || 120));
+      const ppq = Math.max(48, Math.min(9600, parseInt(document.getElementById('ppq').value,10) || 480));
+      const octave = Math.max(0, Math.min(8, parseInt(document.getElementById('octave').value,10) || 4));
+      const ch = 0; // ch1
+
+      const events = [];
+      events.push(meta(0, 0x03, Array.from(new TextEncoder().encode('Chord to MIDI'))));
+      events.push(tempoMeta(bpm));
+      events.push(timeSigMeta(4,4));
+      events.push(programChange(0, ch, 0)); // Acoustic Grand Piano
+
+      // ランニングデルタ管理
+      // 各コードで: 先頭noteOnは蓄積デルタ、残りnoteOnは0。終了時は先頭noteOffでdurTicks、残り0。
+      let runningDelta = 0;
+
+      for(const r of rows){
+        const ints = chordFormula(r.qual);
+        const baseUp = ints.map(iv => noteNumber(r.root, octave) + iv);
+        const bassOct = Math.max(0, octave-1);
+        const bassN = noteNumber(r.bass ? r.bass : r.root, bassOct);
+        const upper = baseUp.filter(n => pc(n)!==pc(bassN)).map(n=>{ while(n <= bassN) n += 12; return n; });
+        const notes = [bassN, ...upper];
+        const durTicks = Math.max(1, Math.round(r.quarters * ppq));
+
+        // note on (同時)
+        notes.forEach((n,i)=>{
+          events.push(noteOn(i===0 ? runningDelta : 0, ch, n, 96));
+        });
+
+        // note off（同時）
+        notes.forEach((n,i)=>{
+          events.push(noteOff(i===0 ? durTicks : 0, ch, n, 0));
+        });
+
+        // 次のchord開始までのデルタは0（durTicksはnoteOffに乗せた）
+        runningDelta = 0;
+      }
+
+      // End of Track
+      events.push(meta(0, 0x2F, []));
+      const track = buildTrack(events);
+      const midi = makeMidi(track, ppq);
+      return { midi };
+    }
+
+    // ===== UI Wiring =====
+    const $input = document.getElementById('input');
+    const $ascii = document.getElementById('ascii');
+    const $status = document.getElementById('status');
+
+    function refreshPreview(){
+      try{
+        const rows = parseAll($input.value);
+        const ppq = parseInt(document.getElementById('ppq').value,10)||480;
+        const octave = parseInt(document.getElementById('octave').value,10)||4;
+        $ascii.textContent = rowsToAscii(rows, octave, ppq);
+        $status.innerHTML = `<span class="good">解析OK</span>  トークン数: ${rows.length}`;
+      }catch(err){
+        $ascii.textContent = ("エラー: " + err.message);
+        $status.innerHTML = `<span class=\"bad\">解析エラー</span> ${err.message}`;
+      }
+    }
+
+    $input.addEventListener('input', refreshPreview);
+    document.getElementById('ppq').addEventListener('input', refreshPreview);
+    document.getElementById('octave').addEventListener('input', refreshPreview);
+
+    document.getElementById('genBtn').addEventListener('click', () => {
+      try{
+        const rows = parseAll($input.value);
+        if(rows.length === 0) throw new Error('入力が空です');
+        const { midi } = buildMidiFromRows(rows);
+        const blob = new Blob([midi], { type: 'audio/midi' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const ts = new Date().toISOString().replace(/[:.]/g,'');
+        a.href = url;
+        a.download = `chords_${ts}.mid`;
+        a.click();
+        setTimeout(()=> URL.revokeObjectURL(url), 10000);
+        $status.innerHTML = `<span class="good">MIDI書き出し成功</span>`;
+      }catch(err){
+        $status.innerHTML = `<span class=\"bad\">書き出し失敗</span> ${err.message}`;
+      }
+    });
+
+    document.getElementById('copyAscii').addEventListener('click', async ()=>{
+      try{
+        await navigator.clipboard.writeText($ascii.textContent);
+        $status.innerHTML = `<span class="good">ASCII表をコピーしました</span>`;
+      }catch(err){
+        $status.innerHTML = `<span class=\"warn\">クリップボードにコピーできませんでした</span> ${err.message}`;
+      }
+    });
+
+    // 初期プレビュー
+    $input.value = $input.placeholder;
+    refreshPreview();
+  </script>
+</body>
+</html>
