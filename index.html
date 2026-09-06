@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Blue Marble 地球儀 / メルカトル試作</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:#0b1020;color:#eef3ff;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+  body{overflow:hidden}
+  #app{height:100%;display:grid;grid-template-rows:auto 1fr}
+  header{
+    display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+    padding:10px 12px;background:#121a31;border-bottom:1px solid #2b375c;
+  }
+  header strong{font-size:15px}
+  button,.fileLabel{
+    appearance:none;border:1px solid #50618e;background:#1b2749;color:#fff;
+    border-radius:10px;padding:8px 12px;font-size:13px;cursor:pointer
+  }
+  button:active,.fileLabel:active{transform:translateY(1px)}
+  input[type=file]{display:none}
+  #status{font-size:12px;color:#b8c5ea;min-width:180px}
+  #main{min-height:0;display:grid;grid-template-columns:1fr 1fr}
+  .pane{position:relative;min-width:0;min-height:0;overflow:hidden}
+  .pane:first-child{border-right:1px solid #2b375c}
+  .title{
+    position:absolute;z-index:5;left:10px;top:10px;
+    background:#07101dcc;border:1px solid #33436d;border-radius:8px;
+    padding:6px 9px;font-size:12px;pointer-events:none
+  }
+  .note{
+    position:absolute;z-index:5;left:10px;bottom:10px;right:10px;
+    background:#07101dcc;border:1px solid #33436d;border-radius:8px;
+    padding:7px 9px;font-size:11px;line-height:1.45;color:#d9e2ff;pointer-events:none
+  }
+  canvas{display:block;width:100%;height:100%}
+  #flatWrap{
+    width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+    padding:52px 10px 58px
+  }
+  #mercatorCanvas{
+    width:100%;height:auto;max-height:100%;object-fit:contain;
+    background:#02050c;border:1px solid #2d3a61
+  }
+  @media(max-width:760px){
+    #main{grid-template-columns:1fr;grid-template-rows:1fr 1fr}
+    .pane:first-child{border-right:0;border-bottom:1px solid #2b375c}
+    header{padding:8px}
+    button,.fileLabel{padding:7px 10px}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <strong>Blue Marble 投影テスト</strong>
+    <button id="loadNasa">NASA画像を読み込む</button>
+    <label class="fileLabel">手元の全球画像を選ぶ<input id="fileInput" type="file" accept="image/*"></label>
+    <button id="reset">地球儀をリセット</button>
+    <span id="status">画像を読み込んでください</span>
+  </header>
+
+  <div id="main">
+    <section class="pane" id="globePane">
+      <div class="title">3D地球儀（元の緯度経度画像）</div>
+      <div class="note">ドラッグ：回転　／　ホイール・ピンチ：拡大縮小</div>
+    </section>
+
+    <section class="pane">
+      <div class="title">メルカトル図法（緯度 ±85.051°）</div>
+      <div id="flatWrap"><canvas id="mercatorCanvas" width="1200" height="1200"></canvas></div>
+      <div class="note">赤道では縮尺1。緯度が高くなるほど東西・南北とも拡大します。</div>
+    </section>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script>
+(() => {
+  const NASA_URL =
+    "https://assets.science.nasa.gov/content/dam/science/esd/eo/images/bmng/bmng-base/january/world.200401.3x5400x2700.jpg";
+
+  const pane = document.getElementById("globePane");
+  const statusEl = document.getElementById("status");
+  const mercCanvas = document.getElementById("mercatorCanvas");
+  const mctx = mercCanvas.getContext("2d");
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x020712);
+
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
+  camera.position.set(0, 0, 3.15);
+
+  const renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+  pane.appendChild(renderer.domElement);
+
+  const geo = new THREE.SphereGeometry(1, 96, 64);
+  const mat = new THREE.MeshBasicMaterial({color:0x335577});
+  const earth = new THREE.Mesh(geo, mat);
+  scene.add(earth);
+
+  // 大気の輪郭を少しだけ
+  const atmosphere = new THREE.Mesh(
+    new THREE.SphereGeometry(1.015, 96, 64),
+    new THREE.MeshBasicMaterial({
+      color:0x6aa7ff, transparent:true, opacity:0.08, side:THREE.BackSide
+    })
+  );
+  scene.add(atmosphere);
+
+  function resize(){
+    const r = pane.getBoundingClientRect();
+    renderer.setSize(r.width, r.height, false);
+    camera.aspect = Math.max(0.1, r.width / Math.max(1,r.height));
+    camera.updateProjectionMatrix();
+  }
+  addEventListener("resize", resize);
+  resize();
+
+  // 手動ドラッグ回転
+  let dragging=false, lastX=0, lastY=0;
+  renderer.domElement.addEventListener("pointerdown", e=>{
+    dragging=true; lastX=e.clientX; lastY=e.clientY;
+    renderer.domElement.setPointerCapture(e.pointerId);
+  });
+  renderer.domElement.addEventListener("pointermove", e=>{
+    if(!dragging) return;
+    const dx=e.clientX-lastX, dy=e.clientY-lastY;
+    earth.rotation.y += dx*0.006;
+    earth.rotation.x += dy*0.006;
+    atmosphere.rotation.copy(earth.rotation);
+    lastX=e.clientX; lastY=e.clientY;
+  });
+  renderer.domElement.addEventListener("pointerup", ()=>dragging=false);
+  renderer.domElement.addEventListener("pointercancel", ()=>dragging=false);
+  renderer.domElement.addEventListener("wheel", e=>{
+    e.preventDefault();
+    camera.position.z = THREE.MathUtils.clamp(camera.position.z + e.deltaY*0.0025, 1.55, 6.0);
+  }, {passive:false});
+
+  // 2本指ピンチ
+  const touches = new Map();
+  let prevPinch=null;
+  renderer.domElement.addEventListener("pointerdown", e=>touches.set(e.pointerId,{x:e.clientX,y:e.clientY}));
+  renderer.domElement.addEventListener("pointermove", e=>{
+    if(!touches.has(e.pointerId)) return;
+    touches.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(touches.size===2){
+      const a=[...touches.values()];
+      const d=Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y);
+      if(prevPinch!==null){
+        camera.position.z = THREE.MathUtils.clamp(camera.position.z - (d-prevPinch)*0.008, 1.55, 6.0);
+      }
+      prevPinch=d;
+    }
+  });
+  const clearTouch=e=>{touches.delete(e.pointerId); if(touches.size<2) prevPinch=null};
+  renderer.domElement.addEventListener("pointerup", clearTouch);
+  renderer.domElement.addEventListener("pointercancel", clearTouch);
+
+  function animate(){
+    requestAnimationFrame(animate);
+    renderer.render(scene,camera);
+  }
+  animate();
+
+  // NASA Blue Marble は正距円筒（equirectangular）画像。
+  // それを canvas 上で逆メルカトル式を使って再サンプリングする。
+  function drawMercator(img){
+    const W = mercCanvas.width, H = mercCanvas.height;
+    const src = document.createElement("canvas");
+    src.width = img.naturalWidth || img.width;
+    src.height = img.naturalHeight || img.height;
+    const sctx = src.getContext("2d", {willReadFrequently:true});
+    sctx.drawImage(img,0,0);
+
+    // 高解像度画像を直接ピクセル処理すると重いので、まず作業用へ縮小。
+    const workW = 1600, workH = 800;
+    const work = document.createElement("canvas");
+    work.width=workW; work.height=workH;
+    const wctx=work.getContext("2d",{willReadFrequently:true});
+    wctx.drawImage(src,0,0,workW,workH);
+    const source=wctx.getImageData(0,0,workW,workH);
+    const dest=mctx.createImageData(W,H);
+
+    const maxLat = 85.05112878 * Math.PI/180;
+    const yMax = Math.log(Math.tan(Math.PI/4 + maxLat/2));
+
+    for(let y=0;y<H;y++){
+      // 上端 +yMax、下端 -yMax
+      const my = yMax * (1 - 2*y/(H-1));
+      const lat = Math.atan(Math.sinh(my));
+      // equirectangular画像の縦座標
+      const sy = Math.max(0, Math.min(workH-1, Math.round((0.5 - lat/Math.PI) * workH)));
+
+      for(let x=0;x<W;x++){
+        const sx = Math.max(0, Math.min(workW-1, Math.round(x/(W-1)*(workW-1))));
+        const si=(sy*workW+sx)*4, di=(y*W+x)*4;
+        dest.data[di]=source.data[si];
+        dest.data[di+1]=source.data[si+1];
+        dest.data[di+2]=source.data[si+2];
+        dest.data[di+3]=255;
+      }
+    }
+    mctx.putImageData(dest,0,0);
+
+    // 赤道と緯度線を薄く表示
+    mctx.save();
+    mctx.strokeStyle="rgba(255,255,255,.32)";
+    mctx.lineWidth=1;
+    mctx.fillStyle="rgba(255,255,255,.75)";
+    mctx.font="14px system-ui";
+
+    [-80,-60,-30,0,30,60,80].forEach(deg=>{
+      const phi=deg*Math.PI/180;
+      const my=Math.log(Math.tan(Math.PI/4+phi/2));
+      const yy=(1-my/yMax)*0.5*H;
+      mctx.beginPath(); mctx.moveTo(0,yy); mctx.lineTo(W,yy); mctx.stroke();
+      mctx.fillText((deg===0?"赤道 0°":Math.abs(deg)+"°"+(deg>0?"N":"S")),8,Math.max(15,yy-4));
+    });
+    [-180,-120,-60,0,60,120,180].forEach(deg=>{
+      const xx=(deg+180)/360*W;
+      mctx.beginPath(); mctx.moveTo(xx,0); mctx.lineTo(xx,H); mctx.stroke();
+    });
+    mctx.restore();
+  }
+
+  function applyImage(img){
+    const texture = new THREE.Texture(img);
+    texture.needsUpdate = true;
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+
+    if(earth.material.map) earth.material.map.dispose();
+    earth.material.map = texture;
+    earth.material.color.set(0xffffff);
+    earth.material.needsUpdate=true;
+
+    statusEl.textContent="画像読込完了：地球儀 + メルカトル再投影";
+    drawMercator(img);
+  }
+
+  function loadRemote(){
+    statusEl.textContent="NASA Blue Marbleを読み込み中…";
+    const img=new Image();
+    img.crossOrigin="anonymous";
+    img.onload=()=>applyImage(img);
+    img.onerror=()=>{
+      statusEl.textContent="NASA直読みに失敗。JPEGを保存して「手元の全球画像を選ぶ」を使ってください。";
+    };
+    img.src=NASA_URL;
+  }
+
+  document.getElementById("loadNasa").addEventListener("click",loadRemote);
+
+  document.getElementById("fileInput").addEventListener("change",e=>{
+    const file=e.target.files && e.target.files[0];
+    if(!file) return;
+    const url=URL.createObjectURL(file);
+    const img=new Image();
+    img.onload=()=>{applyImage(img); URL.revokeObjectURL(url)};
+    img.src=url;
+  });
+
+  document.getElementById("reset").addEventListener("click",()=>{
+    earth.rotation.set(0,0,0);
+    atmosphere.rotation.set(0,0,0);
+    camera.position.set(0,0,3.15);
+  });
+
+  // 自動でNASAを試す
+  loadRemote();
+})();
+</script>
+</body>
+</html>
